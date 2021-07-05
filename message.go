@@ -1,11 +1,13 @@
 package stun
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
 )
 
+var bin = binary.BigEndian
 const (
 	transactionIDSize = 16                                                      // transactionId size of bytes
 	messageTypeSize   = 2                                                       // message type size of bytes

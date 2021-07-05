@@ -82,7 +82,6 @@ func Detect(address string) NatType {
 	conn, err := net.Dial("udp", address)
 	if err != nil {
 		log.Fatal(err)
-		panic(err)
 	}
 	defer conn.Close()
 

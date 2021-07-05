@@ -2,9 +2,12 @@ package server
 
 import (
 	"log"
+	"math"
 	"net"
-	"strconv"
 	"stun"
+	"stun/transform"
+	"stun/util"
+	"syscall"
 )
 
 
@@ -58,38 +61,45 @@ func handleBindReq(udpConn *net.UDPConn,rUdpAddr *net.UDPAddr,msg stun.OutMessag
 	} else {
 		addr := udpConn.LocalAddr().(*net.UDPAddr)
 		port := addr.Port
-		ip:= addr.IP.String()
-		//if cip[0] {
-		//	ips := strings.Split(ip,".")
-		//	ips3, err := strconv.Atoi(ips[3])
-		//	if err != nil {
-		//		return err
-		//	}
-		//	if ips3 > 128 {
-		//		ips3 -= 1
-		//	} else {
-		//		ips3 += 1
-		//	}
-		//	ips[3] = strconv.Itoa(ips3)
-		//	ip = strings.Join(ips,".")
-		//}
+		ip:= make([]byte,len(addr.IP))
+		copy(ip,addr.IP)
+		if cip[0] {
+			len := len(ip)
+			ip[len - 1] = ((ip[len - 1] + 1) % 254) + 1
+		}
 		if cip[1] {
-			if port < 65500 {
-				port += 1
-			} else {
-				port -= 1
-			}
+			port = (port + 1) % math.MaxInt8
 		}
-		udpAddr,err := net.ResolveUDPAddr("udp",ip+":"+strconv.Itoa(port))
+		//udpAddr := net.UDPAddr{ip,port,""}
+
+		rawConn,err := udpConn.SyscallConn()
 		if err != nil {
+			log.Fatal(err)
 			return err
 		}
-		udpConn,err := net.DialUDP("udp",udpAddr,rUdpAddr)
+		srcIp,dstIp := util.Ip2l(ip),util.Ip2l(addr.IP)
+		udpPkg,err :=  transform.NewUdpPackage(srcIp,dstIp,uint16(port),uint16(addr.Port),resp.ToRaw())
 		if err != nil {
+			log.Fatal(err)
 			return err
 		}
-		defer udpConn.Close()
-		udpConn.WriteToUDP(resp.ToRaw(),rUdpAddr)
+		ipPkg,err := transform.NewIpPackage(srcIp,dstIp,udpPkg.ToRaw())
+		if err != nil {
+			log.Fatal(err)
+			return err
+		}
+
+		err = rawConn.Write(func(s uintptr) bool {
+			// todo sendto
+			//_, opErr := syscall.Sendto(int(s), ipPkg.ToRaw())
+			//if opErr == syscall.EAGAIN {
+			//	return false
+			//}
+			return true
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	return nil
