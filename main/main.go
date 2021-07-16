@@ -1,15 +1,28 @@
 package main
 
-import "fmt"
+import (
+	"flag"
+	"fmt"
+	"stun/client"
+	"stun/server"
+)
+
+const (
+	serverMode = "server"
+	clientMode = "client"
+)
 
 func main() {
-	iArray := [2]int{1,2}
-	sArray := iArray[:1]
-	aArray := append(sArray,4,5)
-	fmt.Printf("%p,%p,%p,",&iArray,sArray,aArray)
-	fmt.Printf("%v",iArray)
-	iArray[1] = 3
-	fmt.Printf("%v",iArray)
-	//testPoint(sArray)
-}
+	m := flag.String("m", "server", "server or client")
+	h := flag.String("h", "127.0.0.1:3478", "host")
+	l := flag.String("l", "127.0.0.1:12345", "local host")
+	flag.Parse()
 
+	if serverMode == *m {
+		server.Serve(*h)
+	} else if clientMode == *m {
+		fmt.Printf("%s", client.NatTypeName(client.Detect(*l, *h)))
+	} else {
+		fmt.Printf("%s", "参数不合法")
+	}
+}

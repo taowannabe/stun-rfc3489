@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"log"
 	"math"
-	"math/rand"
 	"net"
 	"syscall"
 )
@@ -42,7 +41,7 @@ func NewIpPackage(srcAddr uint32, dstAddr uint32, data []byte) (*IpPackage, erro
 		headerLength: fixedIpHeaderLength,
 		ds:           0,
 		totalLength:  uint16(fixedIpHeaderLength + len(data)),
-		id:           uint16(rand.Uint32()),
+		id:           uint16(12345),
 		mf:           false,
 		df:           false,
 		sliceOffset:  0,
@@ -56,7 +55,7 @@ func NewIpPackage(srcAddr uint32, dstAddr uint32, data []byte) (*IpPackage, erro
 }
 func (p *IpPackage) ToRaw() []byte {
 	raw := make([]byte, fixedIpHeaderLength, len(p.data)+fixedIpHeaderLength)
-	raw[0] = p.version + p.headerLength<<2
+	raw[0] = (p.version << 4) + (p.headerLength / 4)
 	raw[1] = p.ds
 	bin.PutUint16(raw[2:], p.totalLength)
 	bin.PutUint16(raw[4:], p.id)
@@ -117,22 +116,22 @@ func (u *UdpPackage) ToRaw() []byte {
 	rawLength := len(raw)
 	for i := 0; i < rawLength; i += 2 {
 		code := uint32(0)
-		if i + 1 < rawLength {
-			code = uint32(bin.Uint16(raw[i:i+2]))
+		if i+1 < rawLength {
+			code = uint32(bin.Uint16(raw[i : i+2]))
 		} else {
-			code =  uint32(raw[i]) << 8
+			code = uint32(raw[i]) << 8
 		}
 		checkCode += code
 		checkCode = (checkCode >> 16) + (checkCode & math.MaxUint16)
 	}
-	bin.PutUint16(raw[18:],uint16(^checkCode))
-	return raw[udpCheckHeaderLength:udpCheckHeaderLength + u.udpLength]
+	bin.PutUint16(raw[18:], uint16(^checkCode))
+	return raw[udpCheckHeaderLength : udpCheckHeaderLength+u.udpLength]
 }
 func NewUdpPackage(srcAddr, dstAddr uint32, srcPort, dstPort uint16, data []byte) (*UdpPackage, error) {
 	u := UdpPackage{
 		srcAddr:   srcAddr,
 		dstAddr:   dstAddr,
-		udpLength: uint16(udpHeaderLength+len(data)),
+		udpLength: uint16(udpHeaderLength + len(data)),
 		srcPort:   srcPort,
 		dstPort:   dstPort,
 		data:      data,
