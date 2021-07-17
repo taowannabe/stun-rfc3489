@@ -100,16 +100,15 @@ func newAttrResponseAddress(respAddress string) (Attribute, error) {
 	return Attribute{AttrResponseAddress, uint16(8), addrBytes}, nil
 }
 func newAttrChangeRequest(changeIp bool, changePort bool) (Attribute, error) {
-	value := uint16(0x0000)
+	value := uint8(0x00)
 	if changeIp {
-		value = value & uint16(0x0004)
+		value = value | uint8(0x04)
 	}
 	if changePort {
-		value = value & uint16(0x0002)
+		value = value | uint8(0x02)
 	}
-	bytes := [2]byte{}
-	bin.PutUint16(bytes[:], value)
-	return Attribute{AttrChangeRequest, uint16(8), bytes[:]}, nil
+	bytes := [4]byte{0, 0, 0, value}
+	return Attribute{AttrChangeRequest, uint16(4), bytes[:]}, nil
 }
 func newAttrSourceAddress(sourceAddress string) (Attribute, error) {
 	addrBytes, err := address2bytes(sourceAddress)

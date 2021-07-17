@@ -1,9 +1,14 @@
 package client
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"log"
 	"net"
+	"os"
 	"stun"
+	"stun/transform"
 	"time"
 )
 
@@ -212,4 +217,74 @@ func handleBindResp(msg stun.OutMessage) string {
 	av := msg.GetAttribute(stun.AttrMappedAddress)
 	mappedAddress := av.(string)
 	return mappedAddress
+}
+
+func ListenEcho(laddr, saddr string) {
+	lAddr, err := net.ResolveUDPAddr("udp", laddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sAddr, err := net.ResolveUDPAddr("udp", saddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	p2p, err := transform.ListenP2p(lAddr, sAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("listen echo on %s", p2p.NatAddr().String())
+	go echoOut(p2p)
+	go echoIn(p2p)
+	<-make(chan struct{})
+
+}
+func Echo(laddr, raddr, saddr string) {
+	lAddr, err := net.ResolveUDPAddr("udp", laddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	rAddr, err := net.ResolveUDPAddr("udp", raddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sAddr, err := net.ResolveUDPAddr("udp", saddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	p2p, err := transform.DialP2p(lAddr, rAddr, sAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("echo to %s from %s \n", raddr, p2p.NatAddr().String())
+	go echoOut(p2p)
+	go echoIn(p2p)
+	<-make(chan struct{})
+
+}
+func echoOut(reader io.Reader) {
+	for {
+		buf := make([]byte, 1500)
+		n, err := reader.Read(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		//log.Println("write a word to stdout")
+		fmt.Println(string(buf[:n]))
+	}
+}
+func echoIn(writer io.Writer) {
+	in := bufio.NewReader(os.Stdin)
+	for {
+		str, _, err := in.ReadLine()
+		if err != nil {
+			log.Fatal(err)
+		}
+		//log.Println("read a word from stdin")
+		_, err = writer.Write(str)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 }

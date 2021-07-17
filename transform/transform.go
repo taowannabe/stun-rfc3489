@@ -2,10 +2,14 @@ package transform
 
 import (
 	"encoding/binary"
+	"errors"
 	"log"
 	"math"
 	"net"
+	"stun"
+	"stun/util"
 	"syscall"
+	"time"
 )
 
 var bin = binary.BigEndian
@@ -139,113 +143,278 @@ func NewUdpPackage(srcAddr, dstAddr uint32, srcPort, dstPort uint16, data []byte
 	return &u, nil
 }
 
-type CamouflagedUdpConn struct {
-	laddr   net.Addr
-	raddr   net.Addr
-	udpConn net.UDPConn
-	rawFd   int
+type P2pConn struct {
+	lAddr   net.UDPAddr
+	rAddr   net.UDPAddr
+	sAddr   net.UDPAddr
+	nAddr   net.UDPAddr
+	udpConn *net.UDPConn
+	fd      int
 }
 
-func DialCamouflagedUdp(laddr, raddr net.Addr) (*CamouflagedUdpConn, error) {
-	conn := &CamouflagedUdpConn{laddr: laddr, raddr: raddr}
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, 0)
+func hole(lAddr, rAddr *net.UDPAddr) (string, error) {
+	conn, err := net.DialUDP("udp", lAddr, rAddr)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
+	}
+	defer conn.Close()
+	id := stun.NewTransactionID()
+	request, err := stun.NewBindRequest(id[:], lAddr.String(), false, false)
+	if err != nil {
+		return "", err
+	}
+	conn.Write(request.ToRaw())
+
+	buf := make([]byte, 1500)
+	n, err := conn.Read(buf)
+	if err != nil {
+		log.Printf("%v", err.Error())
+		return "", err
+	}
+	if stun.IsMessage(buf[:n]) {
+		m, err := stun.ToMessage(buf[:n])
+		if err != nil {
+			return "", err
+		} else {
+			switch m.MessageType() {
+			case stun.BindResp:
+				log.Printf("receive message for hole from server,%v", m.ToString())
+				av := m.GetAttribute(stun.AttrMappedAddress)
+				return av.(string), nil
+			default:
+				return "", errors.New("hole failed")
+			}
+		}
+	}
+	return "", errors.New("hole failed")
+}
+func DialP2p(laddr, raddr, saddr net.Addr) (p2pConn *P2pConn, err error) {
+	lAddr, err := net.ResolveUDPAddr("udp", laddr.String())
+	if err != nil {
 		return nil, err
 	}
-	conn.rawFd = fd
-	udpAddr, err := net.ResolveUDPAddr("udp", laddr.String())
+	rAddr, err := net.ResolveUDPAddr("udp", raddr.String())
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	udpConn, err := net.ListenUDP("udp", udpAddr)
-	conn.udpConn = *udpConn
+	sAddr, err := net.ResolveUDPAddr("udp", saddr.String())
+	if err != nil {
+		return nil, err
+	}
+	naddr, err := hole(lAddr, sAddr)
+	if err != nil {
+		return nil, err
+	}
+	nAddr, err := net.ResolveUDPAddr("udp", naddr)
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			syscall.Shutdown(fd, syscall.SHUT_RDWR)
+		}
+	}()
+	udpConn, err := net.ListenUDP("udp", lAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			udpConn.Close()
+		}
+	}()
+
+	if err != nil {
+		return nil, err
+	}
+	p2pConn = &P2pConn{
+		lAddr:   *lAddr,
+		rAddr:   *rAddr,
+		sAddr:   *sAddr,
+		nAddr:   *nAddr,
+		udpConn: udpConn,
+		fd:      fd,
+	}
+	// 测试对端
+	id := stun.NewTransactionID()
+	request, err := stun.NewBindRequest(id[:], naddr, true, false)
+	if err != nil {
+		return nil, err
+	}
+	raw := request.ToRaw()
+	log.Printf("message: %s", request.ToString())
+	log.Printf("raw: %x", raw)
+	_, err = p2pConn.Write(raw)
+	if err != nil {
+		return nil, err
+	}
+	return p2pConn, nil
+}
+func ListenP2p(laddr, saddr net.Addr) (*P2pConn, error) {
+	lAddr, err := net.ResolveUDPAddr("udp", laddr.String())
+	if err != nil {
+		return nil, err
+	}
+	sAddr, err := net.ResolveUDPAddr("udp", saddr.String())
+	if err != nil {
+		return nil, err
+	}
+	naddr, err := hole(lAddr, sAddr)
+	if err != nil {
+		return nil, err
+	}
+	nAddr, err := net.ResolveUDPAddr("udp", naddr)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
+	if err != nil {
+		return nil, err
+	}
+	udpConn, err := net.ListenUDP("udp", lAddr)
+	if err != nil {
+		return nil, err
+	}
+	conn := &P2pConn{
+		lAddr:   *lAddr,
+		sAddr:   *sAddr,
+		nAddr:   *nAddr,
+		udpConn: udpConn,
+		fd:      fd,
+	}
 	return conn, nil
 }
-func (c *CamouflagedUdpConn) ok() bool { return c != nil && c.rawFd != 0 }
+func (c *P2pConn) ok() bool {
+	return c != nil && c.udpConn != nil && c.fd != 0 && c.rAddr.IP != nil
+}
+func (c *P2pConn) readOk() bool {
+	return c != nil && c.udpConn != nil && c.fd != 0
+}
+func (c *P2pConn) NatAddr() *net.UDPAddr {
+	return &c.nAddr
+}
 
-// Read implements the Conn Read method.
-//func (c *CamouflagedUdpConn) Read(b []byte) (int, error) {
-//	if !c.ok() {
-//		return 0, syscall.EINVAL
-//	}
-//	n, err :=
-//		syscall.read
-//	return n, err
-//}
-//
-//// Write implements the Conn Write method.
-//func (c *CamouflagedUdpConn) Write(b []byte) (int, error) {
-//	if !c.ok() {
-//		return 0, syscall.EINVAL
-//	}
-//	n, err := c.Write(b)
-//	if err != nil {
-//		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
-//	}
-//	return n, err
-//}
-//
-//// Close closes the connection.
-//func (c *CamouflagedUdpConn) Close() error {
-//	if !c.ok() {
-//		return syscall.EINVAL
-//	}
-//	err := c.Close()
-//	if err != nil {
-//		err = &OpError{Op: "close", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
-//	}
-//	return err
-//}
-//
-//// LocalAddr returns the local network address.
-//// The Addr returned is shared by all invocations of LocalAddr, so
-//// do not modify it.
-//func (c *CamouflagedUdpConn) LocalAddr() Addr {
-//	if !c.ok() {
-//		return nil
-//	}
-//	return c.laddr
-//}
-//
-//// RemoteAddr returns the remote network address.
-//// The Addr returned is shared by all invocations of RemoteAddr, so
-//// do not modify it.
-//func (c *CamouflagedUdpConn) RemoteAddr() Addr {
-//	if !c.ok() {
-//		return nil
-//	}
-//	return c.raddr
-//}
-//// SetDeadline implements the Conn SetDeadline method.
-//func (c *CamouflagedUdpConn) SetDeadline(t time.Time) error {
-//	if !c.ok() {
-//		return syscall.EINVAL
-//	}
-//	if err := c.SetDeadline(t); err != nil {
-//		return &OpError{Op: "set", Net: c.net, Source: nil, Addr: c.laddr, Err: err}
-//	}
-//	return nil
-//}
-//
-//// SetReadDeadline implements the Conn SetReadDeadline method.
-//func (c *CamouflagedUdpConn) SetReadDeadline(t time.Time) error {
-//	if !c.ok() {
-//		return syscall.EINVAL
-//	}
-//	if err := c.SetReadDeadline(t); err != nil {
-//		return &OpError{Op: "set", Net: c.net, Source: nil, Addr: c.laddr, Err: err}
-//	}
-//	return nil
-//}
-//
-//// SetWriteDeadline implements the Conn SetWriteDeadline method.
-//func (c *CamouflagedUdpConn) SetWriteDeadline(t time.Time) error {
-//	if !c.ok() {
-//		return syscall.EINVAL
-//	}
-//	if err := c.SetWriteDeadline(t); err != nil {
-//		return &OpError{Op: "set", Net: c.net, Source: nil, Addr: c.laddr, Err: err}
-//	}
-//	return nil
-//}
+//Read implements the Conn Read method.
+func (c *P2pConn) Read(b []byte) (int, error) {
+	if !c.readOk() {
+		return 0, syscall.EINVAL
+	}
+	n, err := c.udpConn.Read(b)
+	if c.rAddr.IP == nil {
+		nb := make([]byte, n)
+		copy(nb, b)
+		err = c.setRAddr(nb)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return n, err
+}
+func (c *P2pConn) setRAddr(byte []byte) error {
+	log.Printf("raw: %x", byte)
+	m, err := stun.ToMessage(byte)
+	if err != nil {
+		return err
+	}
+	if stun.BindReq == m.MessageType() {
+		log.Printf("receive message for hole from endpoint,%v", m.ToString())
+		av := m.GetAttribute(stun.AttrResponseAddress)
+		addr, err := net.ResolveUDPAddr("udp", av.(string))
+		if err != nil {
+			return err
+		}
+		c.rAddr = *addr
+		return nil
+	}
+	return errors.New("hole to endpoint failed")
+
+}
+
+// Write implements the Conn Write method.
+func (c *P2pConn) Write(b []byte) (int, error) {
+	if !c.ok() {
+		return 0, syscall.EINVAL
+	}
+	srcIp, dstIp := util.Ip2l(c.sAddr.IP), util.Ip2l(c.rAddr.IP)
+	//log.Printf("srcIp:%v,dstIp:%v,sport:%v,dport:%v", c.sAddr.IP, c.rAddr.IP, c.sAddr.Port, c.rAddr.Port)
+	udpPkg, err := NewUdpPackage(srcIp, dstIp, uint16(c.sAddr.Port), uint16(c.rAddr.Port), b)
+	if err != nil {
+		return 0, err
+	}
+	ipPkg, err := NewIpPackage(srcIp, dstIp, udpPkg.ToRaw())
+	if err != nil {
+		return 0, nil
+	}
+	sa := syscall.SockaddrInet4{}
+	sa.Addr[0], sa.Addr[1], sa.Addr[2], sa.Addr[3] = c.rAddr.IP[0], c.rAddr.IP[1], c.rAddr.IP[2], c.rAddr.IP[3]
+
+	err = syscall.Sendto(c.fd, ipPkg.ToRaw(), 0, &sa)
+	return len(b), err
+}
+
+// Close closes the connection.
+func (c *P2pConn) Close() error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	err := c.udpConn.Close()
+	if err != nil {
+		return err
+	}
+	err = syscall.Shutdown(c.fd, syscall.SHUT_RDWR)
+	return err
+}
+
+// LocalAddr returns the local network address.
+// The Addr returned is shared by all invocations of LocalAddr, so
+// do not modify it.
+func (c *P2pConn) LocalAddr() net.Addr {
+	if !c.ok() {
+		return nil
+	}
+	return &c.lAddr
+}
+
+// RemoteAddr returns the remote network address.
+// The Addr returned is shared by all invocations of RemoteAddr, so
+// do not modify it.
+func (c *P2pConn) RemoteAddr() net.Addr {
+	if !c.ok() {
+		return nil
+	}
+	return &c.rAddr
+}
+
+// SetDeadline implements the Conn SetDeadline method.
+func (c *P2pConn) SetDeadline(t time.Time) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	if err := c.udpConn.SetDeadline(t); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+func (c *P2pConn) SetReadDeadline(t time.Time) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	if err := c.udpConn.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SetWriteDeadline implements the Conn SetWriteDeadline method.
+func (c *P2pConn) SetWriteDeadline(t time.Time) error {
+	if !c.ok() {
+		return syscall.EINVAL
+	}
+	if err := c.udpConn.SetWriteDeadline(t); err != nil {
+		return err
+	}
+	return nil
+}

@@ -72,7 +72,7 @@ func handleBindReq(udpConn *net.UDPConn, rUdpAddr *net.UDPAddr, msg stun.OutMess
 			port = (port + 1) % math.MaxInt8
 		}
 		srcIp, dstIp := util.Ip2l(sIp), util.Ip2l(rUdpAddr.IP)
-		log.Printf("srcIp:%v,dstIp:%v,sport:%v,dport:%v", sIp, rUdpAddr.IP, port, rUdpAddr.Port)
+		//log.Printf("srcIp:%v,dstIp:%v,sport:%v,dport:%v", sAddr.IP, rUdpAddr.IP, port, rUdpAddr.Port)
 		udpPkg, err := transform.NewUdpPackage(srcIp, dstIp, uint16(port), uint16(rUdpAddr.Port), resp.ToRaw())
 		if err != nil {
 			log.Fatal(err)

@@ -8,6 +8,7 @@ import (
 )
 
 var bin = binary.BigEndian
+
 const (
 	transactionIDSize = 16                                                      // transactionId size of bytes
 	messageTypeSize   = 2                                                       // message type size of bytes
@@ -50,7 +51,7 @@ func (m *message) GetAttribute(attrType AttrType) interface{} {
 			return bytes2Address(attribute.value)
 		case AttrChangeRequest:
 			f := attribute.value[1]
-			return [2]bool{f ^ 0x04 == 0x04,f ^ 0x02 == 0x02}
+			return [2]bool{f^0x04 == 0x04, f^0x02 == 0x02}
 		case AttrUsername:
 		case AttrPassword:
 		case AttrMessageIntegrity:
@@ -147,11 +148,14 @@ func (m *message) sumLength() {
 	//m.length = m.length + integritySize
 }
 func (m *message) ToString() string {
-	t := fmt.Sprintf("%x%x",bin.Uint64(m.transactionID[:8]),bin.Uint64(m.transactionID[8:]))
+	t := fmt.Sprintf("%x%x", bin.Uint64(m.transactionID[:8]), bin.Uint64(m.transactionID[8:]))
 	str := fmt.Sprintf("message: {messageType:%s, length:%d, transactionId: %s, attributes: [",
-		MessageTypeName(m.messageType),m.length,t)
+		MessageTypeName(m.messageType), m.length, t)
 	for _, a := range m.attributes {
-		str += fmt.Sprintf(AttrTypeName(a.attrType) + ": %v, ",m.GetAttribute(a.attrType))
+		str += fmt.Sprintf(AttrTypeName(a.attrType)+": %v,", m.GetAttribute(a.attrType))
+	}
+	if len(m.attributes) > 0 {
+		str = str[:len(str)-1]
 	}
 	str += "]}"
 	return str
@@ -165,14 +169,21 @@ const (
 	ShareSecretResp      MessageType = 0x0102 //共享私密响应
 	ShareSecretErrorResp MessageType = 0x0112 //共享私密错误响应
 )
+
 func MessageTypeName(messageType MessageType) string {
 	switch messageType {
-		case BindReq: return "BindReq"
-		case BindResp: return "BindResp"
-		case BindErrorResp: return "BindErrorResp"
-		case ShareSecretReq: return "ShareSecretReq"
-		case ShareSecretResp: return "ShareSecretResp"
-		case ShareSecretErrorResp: return "ShareSecretErrorResp"
+	case BindReq:
+		return "BindReq"
+	case BindResp:
+		return "BindResp"
+	case BindErrorResp:
+		return "BindErrorResp"
+	case ShareSecretReq:
+		return "ShareSecretReq"
+	case ShareSecretResp:
+		return "ShareSecretResp"
+	case ShareSecretErrorResp:
+		return "ShareSecretErrorResp"
 	}
 	return ""
 }
