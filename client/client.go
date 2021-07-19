@@ -277,7 +277,11 @@ func echoOut(reader io.Reader) {
 func echoIn(writer io.Writer) {
 	in := bufio.NewReader(os.Stdin)
 	for {
+		// todo 优化自旋（EOF）
 		str, _, err := in.ReadLine()
+		if err == io.EOF {
+			continue
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
